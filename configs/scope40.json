@@ -1,0 +1,16 @@
+{
+  "dataset": "scope40",
+  "levels": ["class", "fold", "superfamily", "family"],
+  "centers": [0.9, 0.7, 0.4, 0.1, 0.0],
+  "temperature": 0.05,
+  "distance_coefficient": 20.0,
+  "learning_rate": 0.0003,
+  "weight_decay": 0.0001,
+  "gradient_clip_norm": 5.0,
+  "batch_anchors": 64,
+  "inference_batch_size": 128,
+  "maximum_epochs": 20,
+  "patience": 3,
+  "minimum_improvement": 0.000001,
+  "early_stopping_from_epoch": 6
+}

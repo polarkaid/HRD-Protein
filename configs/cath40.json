@@ -1,0 +1,16 @@
+{
+  "dataset": "cath40",
+  "levels": ["class", "architecture", "topology", "superfamily"],
+  "centers": [1.1, 0.8, 0.6, 0.3, 0.0],
+  "temperature": 0.05,
+  "distance_coefficient": 20.0,
+  "learning_rate": 0.0003,
+  "weight_decay": 0.0001,
+  "gradient_clip_norm": 5.0,
+  "batch_anchors": 64,
+  "inference_batch_size": 128,
+  "maximum_epochs": 10,
+  "patience": 3,
+  "minimum_improvement": 0.000001,
+  "early_stopping_from_epoch": 6
+}
