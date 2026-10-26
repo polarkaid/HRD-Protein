@@ -34,7 +34,7 @@ class Dataset:
 
 
 class Residues:
-    def __init__(self, data, folder, device='cuda'):
+    def __init__(self, data, folder, device='cuda', required=None):
         folder = Path(folder)
         self.device = torch.device(device)
         with (folder / 'domains.tsv').open(encoding='utf8', newline='') as f:
@@ -45,11 +45,15 @@ class Residues:
         self.offsets = np.load(folder / 'offsets.npy', allow_pickle=False)
         self.raw = np.load(folder / 'embeddings.npy', mmap_mode='r', allow_pickle=False)
         done = np.load(folder / 'done.npy', allow_pickle=False)
-        if not done[self.rows].all():
+        required = np.arange(len(self.rows)) if required is None else np.asarray(required)
+        if not done[self.rows[required]].all():
             raise ValueError('Finish precompute before using this residue cache')
+        self.done = done
         self.lengths = np.diff(self.offsets)[self.rows]
 
     def batch(self, ids):
+        if not self.done[self.rows[ids]].all():
+            raise ValueError('Requested residues have not been cached')
         length = int(self.lengths[ids].max())
         x = np.zeros((len(ids), length, 1024), dtype=np.float32)
         valid = np.arange(length)[None, :] < self.lengths[ids, None]

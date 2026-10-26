@@ -30,8 +30,8 @@ class Sampler:
 
     def epoch(self):
         order = self.main_rng.permutation(self.train)
-        # Keep the published main-order RNG stream, including the old per-main draws.
-        # Supports themselves are drawn below from the independent no-replacement stream.
+        # Preserve the reference RNG stream for main order across epochs.
+        # Supports use an independent stream for sampling without replacement.
         for a in order:
             for d in range(4):
                 pool = self.candidates[d, int(self.codes[a, d])]

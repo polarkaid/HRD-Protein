@@ -1,13 +1,11 @@
 """HRD training, checkpoint selection, embedding and evaluation workflow."""
-import argparse
-import json
-import os
 from pathlib import Path
 import random
 
-os.environ.setdefault('CUBLAS_WORKSPACE_CONFIG', ':4096:8')
-os.environ.setdefault('OMP_NUM_THREADS', '4')
-os.environ.setdefault('MKL_NUM_THREADS', '4')
+from .paths import initialize, save_json
+
+initialize()
+
 import numpy as np
 import torch
 from .data import Dataset, Residues
@@ -29,8 +27,11 @@ def setup(seed):
     torch.backends.cudnn.allow_tf32 = False
 
 
-def save_json(path, value):
-    Path(path).write_text(json.dumps(value, indent=2, allow_nan=False)+'\n', encoding='utf8')
+def save_checkpoint(path, value):
+    path = Path(path)
+    partial = path.with_name(path.name + '.tmp')
+    torch.save(value, partial)
+    partial.replace(path)
 
 
 def forward(model, cache, ids):
@@ -71,10 +72,10 @@ def evaluate(model, cache, data, cfg, partition, output=None):
     return result
 
 
-def train(data, cache, cfg, seed, output):
+def train(data, cache, cfg, seed, output, resume=False):
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
-    if (output / 'best.pt').exists():
+    if (output / 'best.pt').exists() and not resume:
         raise FileExistsError('Choose a new output directory to preserve the existing run')
     setup(seed)
     model = HRD(seed).to(cache.device)
@@ -83,8 +84,25 @@ def train(data, cache, cfg, seed, output):
     sampler = Sampler(data.codes, data.split['train'], data.hashes, seed, cfg['batch_anchors'])
     codes = torch.as_tensor(data.codes, device=cache.device)
     history, best, bad = [], -1.0, 0
-    save_json(output / 'config.json', dict(cfg, seed=seed))
-    for epoch in range(1, cfg['maximum_epochs']+1):
+    start_epoch = 1
+    if resume and (output / 'last.pt').exists():
+        state = torch.load(output / 'last.pt', map_location=cache.device, weights_only=True)
+        if state['config'] != cfg or state['seed'] != seed:
+            raise ValueError('Existing checkpoint has different training settings')
+        model.load_state_dict(state['model'])
+        optimizer.load_state_dict(state['optimizer'])
+        sampler.main_rng.bit_generator.state = state['main_rng']
+        sampler.support_rng.bit_generator.state = state['support_rng']
+        torch.set_rng_state(state['torch_rng'].cpu())
+        if cache.device.type == 'cuda':
+            torch.cuda.set_rng_state_all([v.cpu() for v in state['cuda_rng']])
+        history, best, bad = state['history'], state['best'], state['bad']
+        start_epoch = state['epoch'] + 1
+        print(f'Resuming after epoch {state["epoch"]}.', flush=True)
+        if state['finished']:
+            save_json(output / 'history.json', history)
+            return model
+    for epoch in range(start_epoch, cfg['maximum_epochs']+1):
         model.train()
         bank, losses = sampler.epoch(), []
         for first in range(0, len(bank), cfg['batch_anchors']):
@@ -101,62 +119,21 @@ def train(data, cache, cfg, seed, output):
         value = float(np.mean([r[k] for r in val['metrics'] for k in METRICS]))
         if value > best + cfg['minimum_improvement']:
             best, bad = value, 0
-            torch.save(dict(model=model.state_dict(), epoch=epoch, selection_mean12=best,
-                            config=cfg, seed=seed), output / 'best.pt')
+            save_checkpoint(output / 'best.pt', dict(model=model.state_dict(), epoch=epoch,
+                            selection_mean12=best, config=cfg, seed=seed))
         else:
             bad += 1
         row = dict(epoch=epoch, losses=np.mean(losses, axis=0).tolist(), validation=val, selection_mean12=value)
         history.append(row)
+        finished = (epoch == cfg['maximum_epochs'] or
+                    (epoch >= cfg['early_stopping_from_epoch'] and bad >= cfg['patience']))
+        save_checkpoint(output / 'last.pt', dict(model=model.state_dict(), optimizer=optimizer.state_dict(),
+            config=cfg, seed=seed, epoch=epoch, best=best, bad=bad, history=history,
+            main_rng=sampler.main_rng.bit_generator.state, support_rng=sampler.support_rng.bit_generator.state,
+            torch_rng=torch.get_rng_state(), cuda_rng=torch.cuda.get_rng_state_all() if cache.device.type == 'cuda' else [],
+            finished=finished))
         save_json(output / 'history.json', history)
         print(f'Epoch {epoch}: validation mean12={value:.8f}; best={best:.8f}', flush=True)
-        if epoch >= cfg['early_stopping_from_epoch'] and bad >= cfg['patience']:
+        if finished:
             break
     return model
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['precompute', 'train', 'embed', 'evaluate'])
-    parser.add_argument('--data', required=True, help='External processed dataset directory')
-    parser.add_argument('--cache', required=True, help='External ProtT5 residue cache directory')
-    parser.add_argument('--config', help='configs/cath40.json or configs/scope40.json')
-    parser.add_argument('--output', help='New run or result directory')
-    parser.add_argument('--checkpoint', help='best.pt for embed/evaluate')
-    parser.add_argument('--plm', help='Local ProtT5-XL UniRef50 model directory for precompute')
-    parser.add_argument('--partition', choices=['train', 'validation', 'test'], default='test')
-    parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
-    args = parser.parse_args()
-    setup(args.seed)
-    data = Dataset(args.data)
-    if args.command == 'precompute':
-        if not args.plm:
-            parser.error('precompute requires --plm')
-        from .precompute import precompute
-        precompute(data, args.cache, args.plm, args.device)
-        return
-    if not args.config or not args.output:
-        parser.error('train/embed/evaluate require --config and --output')
-    cfg = json.loads(Path(args.config).read_text(encoding='utf8'))
-    cache = Residues(data, args.cache, args.device)
-    if args.command == 'train':
-        train(data, cache, cfg, args.seed, args.output)
-        return
-    if not args.checkpoint:
-        parser.error('embed/evaluate require --checkpoint')
-    model = HRD().to(cache.device)
-    ck = torch.load(args.checkpoint, map_location=cache.device, weights_only=True)
-    model.load_state_dict(ck['model'])
-    if args.command == 'evaluate':
-        result = evaluate(model, cache, data, cfg, args.partition, args.output)
-        print(json.dumps(result, indent=2), flush=True)
-    else:
-        output = Path(args.output)
-        output.mkdir(parents=True, exist_ok=True)
-        ids = data.split[args.partition]
-        np.savez(output / 'vectors.npz', vectors=encode(model, cache, ids, cfg['inference_batch_size']),
-                 indices=ids, ids=data.ids[ids])
-
-
-if __name__ == '__main__':
-    main()
