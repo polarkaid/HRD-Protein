@@ -10,3 +10,8 @@ conda activate hrd
 python -m pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cu128
 python -m pip install -r requirements.txt
 ```
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+The OpenCLIP copyright notice is preserved in [LICENSES/OpenCLIP.txt](LICENSES/OpenCLIP.txt).
