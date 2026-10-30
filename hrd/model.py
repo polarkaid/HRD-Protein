@@ -1,8 +1,4 @@
-"""HRD: eight 256-dimensional queries, a 4096-wide head, one unit 512-vector.
-
-Attention is reduced from OpenCLIP's AttentionalPooler; see LICENSES/OpenCLIP.txt.
-Parameter names retain compatibility with the manuscript checkpoints.
-"""
+"""Turn residue features into protein vectors with attention pooling."""
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -61,7 +57,6 @@ class HRD(nn.Module):
     def __init__(self, seed=0):
         super().__init__()
         self.model = nn.Module()
-        # Isolated RNG streams reproduce the retained pool and wider-head initialization.
         with torch.random.fork_rng(devices=[]):
             torch.manual_seed(seed)
             self.model.pool = PostPool()

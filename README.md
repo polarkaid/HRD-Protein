@@ -14,4 +14,3 @@ python -m pip install -r requirements.txt
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
-The OpenCLIP copyright notice is preserved in [LICENSES/OpenCLIP.txt](LICENSES/OpenCLIP.txt).
